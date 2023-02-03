@@ -1,0 +1,384 @@
+---
+title: "Prediction of the diabetes"
+author: "Yuxin Cui"
+date: "3 Feb 2023"
+output:
+  word_document: default
+  html_notebook: default
+  pdf_document: default
+---
+
+# Introduction
+In this project, I aim to predict the outcome of the diabetes. The dataset is available from https://www.kaggle.com/datasets/uciml/pima-indians-diabetes-database?resource=download. According to the data source, this dataset is originally from the National Institute of Diabetes and Digestive and Kidney Diseases, and  all patients are females at least 21 years old. The objective of the dataset is to diagnostically predict whether or not a patient has diabetes, based on certain diagnostic measurements included in the dataset. The dataset contains several clinicopathological predictors and one dependent (called "Outcome"). The predictor variables include "Pregnancies", "Glucose", "BloodPressure", "SkinThickness", "Insulin", "BMI", "DiabetesPedigreeFunction" and "Age". 
+
+Data exploratory analysis will be performed in order to understand the nature of the dataset including variables, observations, distributions and sparsity. After the dataset is ready, models will be built and compared to predict the outcome of diabetes using the information available (predictors).   
+
+The accuracy of different models will be compared using RMSE. And the model with the lowest RMSE will be considered the best. 
+
+
+# Methods
+
+In this section, the libraries, data import and exploration, and modelling will be described. 
+
+## Libraries
+
+To make them tidy, all libraries are loaded here unless stated elsewhere. 
+
+```{r, warning = FALSE, message = FALSE}
+if(!require(librarian)) install.packages("librarian", repos = "http://cran.us.r-project.org")
+library(librarian)
+
+librarian::shelf("DataExplorer")
+librarian::shelf("tidyverse")
+librarian::shelf("caret")
+librarian::shelf("data.table")
+librarian::shelf("PerformanceAnalytics")
+librarian::shelf("corrplot")
+librarian::shelf("janitor")
+```
+
+
+## Data
+
+
+### Data loading
+
+The dataset has been downloaded first from the link in the introduction. 
+
+```{r}
+edx <- fread ("diabetes.csv")
+```
+
+
+## Data exploration
+
+### Summary
+
+
+```{r}
+str(edx)
+names(edx)
+dim(edx)
+summary(edx)
+```
+
+
+The dataset contains 9 variables and 768 observations. The data types of "BMI" and  "DiabetesPedigreeFunction" are numeric, while others are integer. 
+
+
+### Distribution of each predictor variable
+
+```{r}
+for (i in c("Pregnancies", "Glucose", "BloodPressure", "SkinThickness", "Insulin",         "BMI", "DiabetesPedigreeFunction","Age")){
+  p <- edx %>% 
+    count(.data[[i]]) %>% ggplot(aes(n))+
+  geom_histogram(bins = 20 , color = "black", fill = "gray")+
+  scale_x_log10()+
+  ggtitle(paste0("Distribution of ", i)) +
+    theme_classic()
+  print(p)
+}
+```
+The data distribution tells us all predictor variables are varied. The effects of these variables on the diabetes outcome should be evaluated. 
+
+### box plots of the variables 
+
+```{r}
+ggplot(stack(edx[, 1:8]), aes(x = ind, y = values, fill = ind)) + 
+  geom_boxplot() +
+  labs(title = "Boxplots of the predictor variables") + 
+  labs(x = "", y = "Values") +
+  theme(axis.text.x = element_text(
+    angle = 45,
+    hjust = 1,
+    vjust = 1
+  )) 
+```
+The boxplots of the dataset show insulin has relatively wide variances with more outliers. 
+
+
+### Correlation matrix
+
+
+In the following correlation matrix plot, the distribution of each variable is shown on the diagonal. On the bottom of the diagonal, the bivariate scatter plots with a fitted line are displayed. On the top of the diagonal, the value of the correlation plus the significance level as stars. Each significance level is associated with a symbol: p-values(0, 0.001, 0.01, 0.05, 0.1, 1) <=> symbols(“***”, “**”, “*”, “.”, " “). 
+
+
+```{r, fig.height=7}
+chart.Correlation(edx[, 1:8], histogram=TRUE, pch=19)
+```
+
+This correlation matrix indicates there is a positive correlation between Pregnancies and Age. 
+
+
+### Chech missing values
+
+```{r}
+plot_missing(edx)
+```
+
+There is no missing value showed in the plot.  
+
+
+## Modelling and prediction
+
+### Data participation before modelling
+
+I first split the dataset into two parts: train_set and test_set. And the split percentage is 80%, which gives a ratio of train_set:test_set to 4:1.
+
+
+```{r}
+# A method from caret
+set.seed(123)
+
+inTrain = createDataPartition(y = edx$Outcome, p = .80, list = FALSE)
+train_set = edx[inTrain,]
+test_set = edx[-inTrain,] 
+```
+
+
+### RMSE calculation function
+
+Root Mean Square Error (RMSE) is used to measure the error of a model in predicting quantitative data. The RMSE was calculated to represent the error loss between the predicted ratings derived from applying the algorithm and actual ratings in the test set. Just assume there are $n$ observations $y_i$ and an estimator that estimates the prediction values $\hat{y_i}$ The equation of RMSE is 
+
+$$ RMSE = \sqrt{\frac{1}{n}\sum(\hat{y_i} – y_i)^2)}$$
+
+RMSE indicates the accuracy. The lower the RMSE, the better the accuracy of a model and its prediction.
+
+
+```{r}
+RMSE <- function(true_value, predicted_value){
+  sqrt(mean((true_value - predicted_value)^2, na.rm = TRUE))
+}
+```
+
+
+### Prepare control parameters for model training
+
+More details of this pre-modelling setting can be found on  https://rdrr.io/cran/caret/man/trainControl.html. 
+
+
+```{r}
+trControl <- trainControl(
+  method = "repeatedcv",
+  number = 10,
+  repeats = 10)
+```
+
+
+### Model 1: GBM
+
+The model GBM (Generalized Boosted Regression Modeling) is a forward learning method, which builds an ensemble of shallow trees in sequence with each tree learning and improving on the previous one. 
+
+
+```{r, fig.height=7}
+set.seed(123)
+fit_gbm <- train(Outcome ~ ., data = train_set, 
+                 method = "gbm", 
+                 trControl = trControl,
+                 verbose = FALSE) 
+fit_gbm
+summary(fit_gbm)
+plot(fit_gbm)
+
+# predict and RMSE
+predictions <- predict(fit_gbm, test_set)
+RMSE_gbm <- RMSE(predictions, test_set$Outcome)
+
+# A result table is created to collect the RMSE results from different modelling
+rmse_results <- data.frame(Method = "gbm", RMSE = RMSE_gbm) %>%  print()
+```
+
+The result of gbm modelling suggests that the first three most important predictors are: Glucose, BMI and Age, while the BloodPressure is the least important one.
+
+
+### Model 2: CART
+
+CART (Classification and Regression Trees): can be used for both classification and regression problems. CART is a decision tree algorithm. In the decision tree, each fork is split into a predictor variable and each node has a prediction for the target variable at the end. The prediction process is: Obtain the best split point, identify the new best split point, split the input by the split point, repeated splitting until a stopping criterion is met. in CART training, the complexity parameter (cp) is used as a penalty to the tree for over fitting of the data.
+
+```{r}
+set.seed(123)
+fit_cart <- train(Outcome~., data = train_set, method = "rpart", trControl = trControl)
+fit_cart
+plot(fit_cart)
+
+# predict and RMSE
+predictions <- predict(fit_cart, test_set)
+RMSE_cart <- RMSE(predictions, test_set$Outcome)
+
+# The result table is expanded to collect the RMSE results from different modelling
+rmse_results <- bind_rows(rmse_results, tibble(Method="cart",  RMSE = RMSE_cart)) %>%  
+  arrange(RMSE) %>% 
+  print()
+```
+
+For this dataset, when cp = 0.04196737, the lowest RMSE is achieved. With the increase of cp, the prediction accuracy starts to drop. 
+
+
+### Model 3: KNN
+
+The k-nearest neighbors classifier (kNN) is a non-parametric supervised machine learning algorithm. It classifies a new data point into its proximate neighbours’ classes. kNN is used for classification and regression tasks.
+
+
+```{r}
+set.seed(123)
+fit_knn <- train(Outcome~., data = train_set, method = "knn", trControl = trControl)
+fit_knn
+plot(fit_knn)
+
+# predict and RMSE
+predictions <- predict(fit_knn, test_set)
+RMSE_knn <- RMSE(predictions, test_set$Outcome)
+
+# The result table is expanded to collect the RMSE results from different modelling
+rmse_results <- bind_rows(rmse_results, tibble(Method="knn",  RMSE = RMSE_knn)) %>%  
+  arrange(RMSE) %>% 
+  print()
+```
+
+In this algorithm, the modelling based on k =9 obtained the best prediction accuracy. 
+
+
+### Model 4: SVM
+
+The SVM (support vector machine) algorithm is a supervised machine learning model. It tries to identify a hyperplane with the maximum margin to separate an N-dimensional space of the data points. It can be used for both classification and regression problems. Radial SVM (svmRadial) Implements a radial SVM using the general svm function. There are two tuning parameters: the sigma parameter defines how far the influence of a single training example reaches, while "C" (cost) parameter is a penalty parameter of the error term.
+
+```{r}
+set.seed(123)
+fit_svm <- train(Outcome~., data = train_set, method = "svmRadial", trControl = trControl)
+fit_svm
+plot(fit_svm)
+
+# predict and RMSE
+predictions <- predict(fit_svm, test_set)
+RMSE_svm <- RMSE(predictions, test_set$Outcome)
+
+# The result table is expanded to collect the RMSE results from different modelling
+rmse_results <- bind_rows(rmse_results, tibble(Method="svm",  RMSE = RMSE_svm)) %>%  
+  arrange(RMSE) %>% 
+  print()
+```
+
+Following the svm training, the best prediction can be seen when two tuning parameters are: sigma = 0.1350768 and C = 0.25.
+
+### Model 5: random forest
+
+The random forest is a supervised learning algorithm that randomly creates and merges multiple decision trees into one "forest". It can also be used to solve regression and classification problems. The method "ranger" is considered a faster implementation of the random forest. 
+
+
+```{r}
+set.seed(123)
+fit_rf <- train(Outcome~., data = train_set, method = "ranger", trControl = trControl)
+fit_rf
+plot(fit_rf)
+
+# predict and RMSE
+predictions <- predict(fit_rf, test_set)
+RMSE_rf <- RMSE(predictions, test_set$Outcome)
+
+# The result table is expanded to collect the RMSE results from different modelling
+rmse_results <- bind_rows(rmse_results, tibble(Method="rf",  RMSE = RMSE_rf)) %>%  
+  arrange(RMSE) 
+
+rmse_results
+```
+
+The best prediction outcome was obtained when "mtry" (the number of features, randomly sampled, to split at each node)is 5, the split rule is "extratrees" and the minimum node size is 5.
+
+
+### Comparison of the Caret models
+
+The Caret modelling results can also be compared after collecting resamples. There are three metrics to compare: RMSE, MAE and Rsquared. Just assume there are $n$ observations $y_i$ and an estimator that estimates the prediction values $\hat{y_i}$, MAE is the Mean of Absolute value of Errors. The equation of MAE is:
+
+$$
+MAE = \frac{\sum_{i = 1}^{n}{(\bar{Y}-Y_i)}}{n}
+$$
+Another metric is Rsquared ($R^2$). The $R^2$ is equal to $$R^2 = 1−SSE/TSS $$, where $SSE$ is the sum of squared errors: $$ SSE = \sum_{i = 1}^{n}(y_i−\hat{y_i})^2 $$. 
+The TSS is the total sum of squares and is equal to $$ TSS = \sum_{i = 1}^{n}(y_i−\bar{Y})^2 $$, where $\bar{Y} = \frac{\sum_{i = 1}^{n}(y_i)}{n} $. $R^2$ is conveniently scaled between 0 and 1.
+
+
+
+```{r}
+
+results <- resamples(list(GBM=fit_gbm, SVM=fit_svm, CART=fit_cart, KNN=fit_knn, RF=fit_rf))
+
+summary(results)
+
+bwplot(results)
+
+dotplot(results)
+```
+
+
+### AutoML method
+
+In this method, a potentially better model could be found by running the  H2O’s AutoML tool and setting up the number of models (max_models). The documents of this tool can be found at https://docs.h2o.ai/h2o/latest-stable/h2o-docs/automl.html. However, the running speed could be slow. 
+
+```{r}
+pkgs <- c("RCurl","jsonlite")
+for (pkg in pkgs) {
+  if (! (pkg %in% rownames(installed.packages()))) { install.packages(pkg) }
+}
+install.packages("h2o", type="source", repos=(c("http://h2o-release.s3.amazonaws.com/h2o/latest_stable_R")))
+```
+
+
+```{r}
+library(h2o)
+
+# Start the H2O cluster (locally)
+h2o.init()
+
+# import datasets
+train_set2 <- as.h2o(train_set)
+test_set2 <- as.h2o(test_set)
+
+# Identify predictors and response
+y <- "Outcome"
+x <- setdiff(names(train_set2), y)
+
+# Run AutoML for mutliple base models
+aml <- h2o.automl(x = x, y = y,
+                  training_frame = train_set2,
+                  max_models = 5,
+                  seed = 1)
+
+# View the AutoML Leaderboard
+lb <- aml@leaderboard
+print(lb, n = nrow(lb))  # Print all rows instead of default (6 rows)
+
+# The leader model is stored here
+fit_aml <- aml@leader
+fit_aml
+
+```
+
+```{r}
+# retrieve the model performance
+perf <- h2o.performance(fit_aml, test_set2)
+perf
+RMSE_aml <- perf@metrics$RMSE
+
+# The result table is expanded to collect the RMSE results from different modelling
+rmse_results <- bind_rows(rmse_results, tibble(Method="H2O’s AutoML",  RMSE = RMSE_aml)) %>%  
+  arrange(RMSE)
+```
+
+
+```{r}
+DiffValue = c(NA, diff(rmse_results$RMSE))
+rmse_results %>% mutate(Difference = DiffValue) %>%
+  replace (is.na(.), "") %>% 
+   print()
+```
+
+# Results
+
+I carried out a project to predict the outcome of diabetes by modelling using multiple ML algorithms. The prediction accuracies of all the selected algorithms were ranked according to the RMSE values. The results showed the random forest (ranger) model built through the caret framework outperformed others to provide the best accuracy. gbm is the second. And a gbm model built through H2) autoML performed as the third. The algorithm followers were svm, knn and cart in terms of their accuracy. It is noted that the accuracies produced by these models have no huge difference (0.05 top vs bottom), suggesting each algorithm possesses a certain prediction capability.
+
+# Conclusion
+
+In this project, I demonstrate the outcome of diabetes can be predicted when data containing certain clinicopathological features are available. An optimum prediction mode can be built when multiple ML algorithms are used to train.
+
+The dictation of the right algorithm will largely depend on the structure and complexity of the data. In this case, the random forest algorithm yields the lowest prediction RMSE. Although the model built through H2O autoMl was not ranked at the top, the advantage of H2O autoMl is obvious as algorithm candidates do not need to be chosen first. But the limitation of this sort of automated machine learning is time-consuming, particularly when a dataset is getting bigger and bigger. Also, manual ML modelling may allow more control than automated modelling when tuning is required.
+
+In this project, I only trained limited prediction models based on the preliminary comparison. The prediction may be improved if more algorithms could be included in the future. Other ML frameworks such as Tensorflow, PyTorch, and scikit-learn may also be worthy to try although they are more python friendly. It may be worthy to consider excluding certain variables which may have little prediction potential according to expert advice, and this may be valuable to reduce computational time and even improve accuracy.
